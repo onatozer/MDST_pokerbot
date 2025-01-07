@@ -439,13 +439,12 @@ class CFR:
         # Save the model weights
         torch.save(self.policy.state_dict(), model_path)
 
-    def load(self, model_path='./cfr_model'):
+    def load(self, model_path='./cfr_model.pth'):
         ''' Load model
         '''
         if not os.path.exists(model_path):
-            #print(f'No model found at {model_path}')
+            print(f'No model found at {model_path}')
             return
 
-        policy_file = open(os.path.join(model_path, 'policy.pkl'), 'rb')
-        self.info_sets = pickle.load(policy_file)
-        policy_file.close()
+        self.policy = torch.load(model_path)
+        
