@@ -1,7 +1,7 @@
 import random
 import torch
 from torch.utils.data import Dataset
-
+import sys
 
 #Default batching behavior from the dataset class causes issues because it can't handle the card tensor as a list of tensors
 #(it ends up changing one of the tensors to a 3D tensor, crashing the program), so this function becomes necessary
@@ -74,7 +74,7 @@ class TrainDataset(Dataset):
 class MemoryReservoir:
     def __init__(self, max_size: int = 1_000):
         self.max_size = max_size
-        self.samples = []  # what datatype
+        self.samples = []  #Each sample will be a tuple (card list tensor, bet tensor, target tensor)
         self.num_samples = 0
 
     # add sample to our list of samples, kickout sample if it exceeds the sample size
@@ -93,5 +93,11 @@ class MemoryReservoir:
     def extract_samples(self):
         return TrainDataset(self.samples)
     
-    # def extract_strategy_samples(self):
+    def get_memory_usage(self):
+        """
+        Returns the memory usage of the reservoir in bytes.
+        """
+        return sys.getsizeof(self.samples) + sum(
+            sys.getsizeof(sample) for sample in self.samples
+        )
         

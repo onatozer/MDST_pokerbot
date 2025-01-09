@@ -12,6 +12,7 @@ import torch.optim as optim
 from config import *
 from network import DeepCFRModel
 from reservoir import MemoryReservoir, custom_collate
+from torch.cuda.amp import GradScaler, autocast
 import sys
 
 from copy import deepcopy
@@ -300,11 +301,6 @@ class CFR:
 
     # NOTE: iterations def should not be 1
     def train(self, iterations=1, K=10):
-        """
-        ### Iteratively update $\textcolor{lightgreen}{\sigma^t(I)(a)}$
-
-        This updates the strategies for $T$ iterations.
-        """
 
         # NOTE: in the paper, they set the memory size to 40 million
         advantage_mem_1 = MemoryReservoir(max_size=MEM_SIZE)
@@ -316,6 +312,10 @@ class CFR:
         # Loop for `epochs` times
         for t in range(iterations):
             print(f"on iteration {t}")
+            print(f"adv memory 1 using {advantage_mem_1.get_memory_usage()}")
+            print(f"adv memory 2 using {advantage_mem_2.get_memory_usage()}")
+            print(f"strategy memory using {strategy_mem.get_memory_usage()}")
+            
             for i in range(self.n_players):
                 # Initialize each player's value networks, and the datasets sampled from the resevior memory
                 adv_network_1 = DeepCFRModel(
@@ -416,15 +416,22 @@ class CFR:
                 output = output.to(DEVICE)
                 batch += 1
 
-                predictions = strategy_network(input1, input2)
+                scaler = GradScaler()
 
-                # Compute loss
-                loss = criterion(predictions, output)
+                with autocast():
+                    predictions = strategy_network(input1, input2)
+                    # Compute loss
+                    loss = criterion(predictions, output)
 
                 # Backward pass
                 optimizer.zero_grad()  # Reset gradients
-                loss.backward()  # Compute gradients
-                optimizer.step()  # Update model parameters
+
+                #Using this scaler this to make training between GPUs and CPUs more efficient
+                scaler.scale(loss).backward()
+
+                scaler.step(optimizer)
+                scaler.update()
+
 
                 # Accumulate loss
                 total_loss += loss.item()

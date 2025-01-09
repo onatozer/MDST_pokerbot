@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import config
+from config import *
 import os
 import pickle
 
@@ -17,13 +17,13 @@ class CardEmbedding(nn.Module):
         x = input.view(-1)
         valid = x.ge(0).float()  # -1 means 'no card'
         x = x.clamp(min=0)
-        embs = self.card(x) + self.rank(x // config.NUM_SUITS) + self.suit(x % config.NUM_SUITS)
+        embs = self.card(x) + self.rank(x // NUM_SUITS) + self.suit(x % NUM_SUITS)
         embs = embs * valid.unsqueeze(1)  # zero out 'no card' embeddings
         # sum across the cards in the hole/board
         return embs.view(B, num_cards, -1).sum(1)
 
 class DeepCFRModel(nn.Module):
-    def __init__(self, n_cardstages, n_ranks, n_suits, nactions, dim=256):
+    def __init__(self, n_cardstages, n_ranks, n_suits, nactions, dim=CARD_EMBEDDING_DIM):
         """
         nbets: is set to 2, indicating that there are 2 distinct betting rounds.
         nactions: is set to 5, representing the number of possible actions in the game.
