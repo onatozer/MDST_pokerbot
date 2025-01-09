@@ -20,11 +20,13 @@ SMALL_BLIND = 5
 
 
 '''Network Hyper-parameter configs'''
-BATCH_SIZE = 4096
+BATCH_SIZE = 48
 
 #Currently using the same learning rate for both networks
 LEARNING_RATE = .001
 
-MEM_SIZE = 400_000
+MEM_SIZE = 40_000
 
+import torch
+DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 

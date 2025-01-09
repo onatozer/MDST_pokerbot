@@ -119,10 +119,10 @@ class InfoSet:
         board_cards = key[2:7]
         
         card_tensor = [
-            torch.tensor(np.array(hole_cards).reshape(1, -1)), #preflop
-            torch.tensor(np.array(board_cards[0:3]).reshape(1, -1)), #flop
-            torch.tensor(np.array(board_cards[3:4]).reshape(1, -1)), #turn
-            torch.tensor(np.array(board_cards[4:5]).reshape(1, -1)), #river
+            torch.tensor(np.array(hole_cards).reshape(1, -1)).to(DEVICE), #preflop
+            torch.tensor(np.array(board_cards[0:3]).reshape(1, -1)).to(DEVICE), #flop
+            torch.tensor(np.array(board_cards[3:4]).reshape(1, -1)).to(DEVICE), #turn
+            torch.tensor(np.array(board_cards[4:5]).reshape(1, -1)).to(DEVICE), #river
         ]
 
         """
@@ -139,5 +139,6 @@ class InfoSet:
         bet_features = key[7:9]
         bet_tensor = torch.tensor(bet_features.reshape(1, -1)).float()
 
-        return card_tensor, bet_tensor
+        # print(f"returning card tensor {card_tensor}\nand returning bet tensor {bet_tensor}")
+        return card_tensor, bet_tensor.to(DEVICE)
 

@@ -57,7 +57,7 @@ class TrainDataset(Dataset):
         input1[1] = input1[1].squeeze() 
 
         for i in range(2, len(input1)):
-            input1[i] = input1[i].squeeze(1)
+            # input1[i] = input1[i].squeeze(1)
             #I have no clue why this is happening, but basically at some point during the 2nd iteration
             # a tensor of shape [] starts getting passed in instead of [[]], so we have to do this
 

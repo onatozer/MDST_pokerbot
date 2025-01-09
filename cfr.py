@@ -280,7 +280,7 @@ class CFR:
         #create the network that'll eventually be making all the decisions
         strategy_network = DeepCFRModel(
             n_cardstages=NUM_CARD_STAGES, n_ranks=NUM_RANKS, n_suits=NUM_SUITS, nactions=NUM_ACTIONS
-        )
+        ).to(DEVICE)
 
         strategy_network.load_state_dict(torch.load("./cfr_model.pth"))
 
@@ -320,11 +320,11 @@ class CFR:
                 # Initialize each player's value networks, and the datasets sampled from the resevior memory
                 adv_network_1 = DeepCFRModel(
                     n_cardstages=NUM_CARD_STAGES, n_ranks=NUM_RANKS, n_suits=NUM_SUITS, nactions=NUM_ACTIONS
-                )
+                ).to(DEVICE)
 
                 adv_network_2 = DeepCFRModel(
                     n_cardstages=NUM_CARD_STAGES, n_ranks=NUM_RANKS, n_suits=NUM_SUITS, nactions=NUM_ACTIONS
-                )
+                ).to(DEVICE)
 
                 # train the advantage network to predict regrets based on infosets from the advantage memory for that player
                 if i == 0:
@@ -358,7 +358,7 @@ class CFR:
                     total_loss = 0.0
 
                     for input1, input2, output in dataloader:
-
+                        output = output.to(DEVICE)
                         # Forward pass
                         predictions = adv_network(input1, input2)
 
@@ -391,7 +391,7 @@ class CFR:
         # initialize the strategy network
         strategy_network = DeepCFRModel(
             n_cardstages=NUM_CARD_STAGES, n_ranks=NUM_RANKS, n_suits=NUM_SUITS, nactions=NUM_ACTIONS
-        )
+        ).to(DEVICE)
 
         # train the strategy network to predict regrets based on infosets from the strategy memory
         #print("Num samples in strategy memory: ", strategy_mem.num_samples, strategy_mem.samples)
@@ -413,6 +413,7 @@ class CFR:
             total_loss = 0.0
             batch = 0
             for input1, input2, output in dataloader:
+                output = output.to(DEVICE)
                 batch += 1
 
                 predictions = strategy_network(input1, input2)
