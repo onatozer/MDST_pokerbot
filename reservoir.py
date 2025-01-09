@@ -52,12 +52,17 @@ class TrainDataset(Dataset):
     def __getitem__(self, idx):
         
         input1, input2, output = self.data[idx]
+
         input1[0] = input1[0].squeeze() 
         input1[1] = input1[1].squeeze() 
+
         for i in range(2, len(input1)):
-            # print("In get item before: ", input1[i].shape)
             input1[i] = input1[i].squeeze(1)
-            # print("In get item: ", input1[i].shape)
+            #I have no clue why this is happening, but basically at some point during the 2nd iteration
+            # a tensor of shape [] starts getting passed in instead of [[]], so we have to do this
+
+            if input1[i].dim() == 2 and input1[i].shape[1] == 1:
+                input1[i] = input1[i].squeeze(1)
         input2 = input2.squeeze()
 
         # output = output.clone().detach().to(torch.float32).squeeze()
@@ -66,7 +71,6 @@ class TrainDataset(Dataset):
 
 
     
-
 class MemoryReservoir:
     def __init__(self, max_size: int = 1_000):
         self.max_size = max_size
@@ -74,7 +78,7 @@ class MemoryReservoir:
         self.num_samples = 0
 
     # add sample to our list of samples, kickout sample if it exceeds the sample size
-    def add_sample(self, infoset, t, target):
+    def add_sample(self, card_tensor, bet_tensor, target):
         self.num_samples += 1
 
         # if sample buffer is too large
@@ -82,21 +86,12 @@ class MemoryReservoir:
             j = random.randint(0, self.num_samples)
 
             if j < self.max_size:
-                self.samples[j] = (infoset, target)
+                self.samples[j] = (card_tensor, bet_tensor, target)
         else:
-            self.samples.append((infoset, target))
+            self.samples.append((card_tensor, bet_tensor, target))
 
     def extract_samples(self):
-        data = []  # List of (card tensor, bet tensor, regrets)
-
-        for sample in self.samples:
-            card_tensor, bet_tensor = sample[0].convert_key_to_tensor()
-            
-            data.append((card_tensor, bet_tensor, sample[1]))
-
-        # print("In extract samples")
-        # print(data)
-        return TrainDataset(data)
+        return TrainDataset(self.samples)
     
     # def extract_strategy_samples(self):
         

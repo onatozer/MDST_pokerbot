@@ -12,6 +12,7 @@ import torch.optim as optim
 from config import *
 from network import DeepCFRModel
 from reservoir import MemoryReservoir, custom_collate
+import sys
 
 from copy import deepcopy
 
@@ -120,6 +121,7 @@ class CFR:
                 info_set_key=info_set_key, legal_actions=legal_actions
             )
 
+
             # Compute sigma_t from the value/regret network
             if i+1 == 1:
                 # Use adv_network 1
@@ -175,8 +177,10 @@ class CFR:
                 for key, value in r_Ia[info_set_key].items():
                     target[key] = value
 
+                card_tensor, bet_tensor = I.convert_key_to_tensor()
+
                 # print(f"adding {torch.tensor(target)} to value memory")
-                M_v.add_sample(I, t, torch.tensor(target, dtype = torch.float32))
+                M_v.add_sample(card_tensor, bet_tensor, torch.tensor(target, dtype = torch.float32))
 
             #NOTE: return value not specified in paper
             return expected_value
@@ -223,8 +227,9 @@ class CFR:
             for act in range(NUM_ACTIONS):
                 sigma_t[act] = I.strategy.get(act,0)
             
+            card_tensor, bet_tensor = I.convert_key_to_tensor()
             # Insert the infoset and its action probabilities (I t t(I)) into the strategy memory M
-            M_pi.add_sample(I, t, torch.tensor(sigma_t, dtype = torch.float32))
+            M_pi.add_sample(card_tensor, bet_tensor, torch.tensor(sigma_t, dtype = torch.float32))
 
             # Sample action from strategy, check if its legal
             
@@ -335,7 +340,7 @@ class CFR:
                 dataloader = []
                 if t > 0:
                     dataloader = DataLoader(
-                        dataset, batch_size=batch_size, shuffle=True, collate_fn=custom_collate
+                        dataset, batch_size=batch_size, shuffle=True, collate_fn=custom_collate, drop_last=True
                     )
 
                 # Define a loss function with Mean Squared Error
@@ -353,6 +358,7 @@ class CFR:
                     total_loss = 0.0
 
                     for input1, input2, output in dataloader:
+
                         # Forward pass
                         predictions = adv_network(input1, input2)
 
@@ -380,6 +386,7 @@ class CFR:
                         self.traverse(
                             i, theta_1=adv_network_1, theta_2=adv_network_2, M_v=advantage_mem_2, M_pi=strategy_mem, t=1
                         )
+                    print(f"K: {k}")
 
         # initialize the strategy network
         strategy_network = DeepCFRModel(
