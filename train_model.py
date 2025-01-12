@@ -1,40 +1,37 @@
-''' An example of solve Leduc Hold'em with CFR (chance sampling)
-'''
-import os
+import pyspiel
+from pyspiel.universal_poker import load_universal_poker_from_acpc_gamedef
+from config import *
+
 import argparse
-
-import rlcard
-
-
 from cfr import CFR
-
-
-from rlcard.agents import (
-    RandomAgent
-)
-
-
-from rlcard.utils import (
-    set_seed,
-    tournament,
-    Logger,
-    plot_curve,
-)
 
 import numpy as np
 import random
 
 
 def train(args):
-    # Make environments, CFR only supports Leduc Holdem
-    env = rlcard.make(
-        'no-limit-holdem',
-        config={
-            'allow_step_back': False,
-        }
-    )
+    # Load the game environment 
+    
 
-    agent = CFR(env=env)
+    #I know it's hella strange, but trust, keep this format exactly like this, and just change the config file, 
+    # you change anything even slightly, code will not work 
+    poker_variant =f"""\
+GAMEDEF
+nolimit
+numPlayers = 2
+numRounds = {NUM_CARD_STAGES}
+blind = {SMALL_BLIND} {BIG_BLIND}
+maxRaises = {MAX_RAISES} {MAX_RAISES}
+numSuits = {NUM_SUITS}
+numRanks = {NUM_RANKS}
+numHoleCards = {NUM_HOLE_CARDS}
+numBoardCards = {" ".join(map(str, BOARD_CARDS))}
+bettingAbstraction = {BETTING_ABSTRACTION}
+END GAMEDEF
+"""
+    game = load_universal_poker_from_acpc_gamedef(poker_variant)
+
+    agent = CFR(game=game)
     agent.load()  # If we have saved model, we first load the model
 
     agent.train(iterations=5, K=10)    

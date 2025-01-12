@@ -55,13 +55,8 @@ class InfoSet:
         self.strategy = {}
         self.calculate_strategy()
 
-        # Create a mapping from cards to ints so that we can pass them in as a tensor
 
-        # extract the card information
-        # for suit in range(NUM_SUITS):
-        #     for rank in range(NUM_RANKS):
-        #         card_num = (suit-1)*rank + rank
-
+    #TODO: Will need to change for poker env with continous raise amount
     def actions(self) -> List[int]:
         """
         Return the list of legal actions.
@@ -101,10 +96,11 @@ class InfoSet:
 
 
 
+    #TODO: This also needs to change for openSpiel (I basically changed nothing, but should work fine)
     def convert_key_to_tensor(self):
         '''
         key:
-            hole_cards + board_cards + state['obs']['all_chips']
+            hole_cards + board_cards + bet_features
         '''
 
         # One numpy array
@@ -136,7 +132,7 @@ class InfoSet:
         ]"""
 
         # print(f"key {key}")
-        bet_features = key[7:9]
+        bet_features = key[7:]
         bet_tensor = torch.tensor(bet_features.reshape(1, -1)).float()
 
         # print(f"returning card tensor {card_tensor}\nand returning bet tensor {bet_tensor}")

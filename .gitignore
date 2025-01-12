@@ -1,0 +1,6 @@
+__pychache__/
+
+#Ignore all model weights (at least for now)
+*.pth
+
+output.txt

@@ -2,7 +2,7 @@ import numpy as np
 from typing import cast, List, Tuple
 from infoset import InfoSet
 import os
-import pickle
+import re
 import random
 from rlcard.utils.utils import *
 import torch
@@ -22,22 +22,20 @@ class CFR:
 
     def __init__(self, *,
                  n_players: int = 2,
-                 env
+                 game
                  ):
         """
         * `create_new_history` creates a new empty history
         * `epochs` is the number of iterations to train on $T$
         * `n_players` is the number of players
         """
-        self.n_players = n_players
-        self.env = env
-        self.use_raw = False
-        # A dictionary for $\mathcal{I}$ set of all information sets
-        # self.create_new_history = create_new_history
-        self.info_sets = {}
+        self.n_players = n_players       
+        self.info_sets = {} #TODO: I don't think we need to be storing this, likely causing the massive mem overhead
+        self.game = game
+
   
 
-    def get_info_set_key(self, player_id):
+    def get_info_set_key(self, state, current_player):
         """
         Generates a unique key for the information set based on the player's observations.
 
@@ -52,37 +50,51 @@ class CFR:
                 where each card is represented as an integer
                 )
         """
+        state_str = state.information_state_string(current_player)
 
-        state = self.env.get_state(player_id)
+
+        pattern = r"\[(\w+):?\s*([^\]]*)\]"
+
+        # Use re.findall to extract all matches
+        matches = re.findall(pattern, state_str)
 
 
-        suit_to_int = {'S': 0, 'H': 13, 'D': 26, 'C': 39}
+        state_info = {key: value for key, value in matches}
+
+        #Initially output as single string, but we want list of individual cards, each 2 chars long, so we have to do this trickery:
+        hole_cards_str = state_info["Private"]
+        hole_cards_str = [hole_cards_str[i] + hole_cards_str[i + 1] for i in range(0, len(hole_cards_str) - 1, 2)]
+
+        board_cards_str = state_info["Public"]
+        board_cards_str = [board_cards_str[i]+ board_cards_str[i + 1] for i in range(0, len(board_cards_str) - 1, 2)]
+
+        #In openSpiel, the suits are lowercase, and the ranks upper
+        suit_to_int = {'s': 0, 'h': 13, 'd': 26, 'c': 39}
         rank_to_int = {'2': 0, '3': 1, '4': 2, '5': 3, '6': 4, '7': 5, '8': 6, '9': 7, 'T': 8,'J': 9 ,'Q': 10, 'K': 11, 'A': 12}
 
+        hole_cards = [-1]*NUM_HOLE_CARDS
 
-        hole_cards = [-1,-1]
+        for i, card in enumerate(hole_cards_str):
+            hole_cards[i] = rank_to_int[card[0]] + suit_to_int[card[1]]
 
-        for i, card in enumerate(state['raw_obs']['hand']):
-            suit = card[0]
-            rank = card[1]
+        board_cards = [-1]*NUM_BOARD_CARDS
 
-            hole_cards[i] = suit_to_int[suit] + rank_to_int[rank]
-
+        for i, card in enumerate(board_cards_str):
+            board_cards[i] = rank_to_int[card[0]] + suit_to_int[card[1]]
 
 
-        board_cards = [-1,-1,-1,-1,-1]
+        #Thinking round + pot + money(format this so player i comes first, then player -i) 
+        stacks = state_info["Money"]
+        stacks = stacks.split(' ')
+        stacks = [int(x) for x in stacks]
 
-        for i, card in enumerate(state['raw_obs']['public_cards']):
-            suit = card[0]
-            rank = card[1]
+        bet_features = [int(state_info["Round"]), int(state_info["Pot"]), stacks[current_player], stacks[1 - current_player]]
 
-            board_cards[i] = suit_to_int[suit] + rank_to_int[rank]
-
-        key = np.array(hole_cards + board_cards + state['raw_obs']['all_chips'], dtype=np.int32)
+        key = np.array(hole_cards + board_cards + bet_features, dtype=np.int32)
         return key.tobytes()
 
 
-    def _get_info_set(self, info_set_key, legal_actions):
+    def _get_info_set(self, info_set_key, legal_actions) -> InfoSet:
         """
         Returns the information set I for the current player at a given state.
         """
@@ -90,38 +102,44 @@ class CFR:
             self.info_sets[info_set_key] = InfoSet(info_set_key, legal_actions)
         return self.info_sets[info_set_key]
 
+    '''
+    Perform a traversal of the game tree population advantage and strategy memories, recursively returning the expected payoffs of actions
+    Instead of a gym environment, OpenSpiel will pass in a 'state' variable which has all the functionality of a gym environment
+    '''
     def traverse(
-        self, i: int, theta_1: DeepCFRModel, theta_2: DeepCFRModel,
+        self, state, i: int, theta_1: DeepCFRModel, theta_2: DeepCFRModel,
         M_v: MemoryReservoir, M_pi: MemoryReservoir, t: int
-    ):
+    ) -> float:
         # player 1 ->index 0, player 2 -> index 1
         # #print(f"Should end here {self.env.curr_round_state}")
 
-        if self.env.is_over():
-            payoff_list = self.env.get_payoffs()
-            return payoff_list[i]
+        if state.is_terminal():
+            # Terminal state get returns.
+            return state.returns()[i]
+        
+        elif state.is_chance_node():
+            # If this is a chance node, sample an action
+            # Have to do this now cause we're not using the gym environment
+            chance_outcome, chance_proba = zip(*state.chance_outcomes())
+            action = np.random.choice(chance_outcome, p=chance_proba)
+            return self.traverse(state.child(action), i, theta_1, theta_2, M_v, M_pi, t+1)
 
-        current_player = self.env.get_player_id()
+        current_player = state.current_player()
         #print(f"current player {current_player}, i {i}")
 
         # NOTE: This code will change based off of gym environment
-        state = self.env.get_state(current_player)
-        legal_actions = state['legal_actions']
-
-        #for some reason RLcard makes their legal actions an ordered dict instead of a list
-        legal_actions = list(legal_actions.keys())
+        legal_actions = state.legal_actions()
 
         v_a = {} # payout for taking action
         r_Ia = {} # regret for each action
 
         if current_player == i:
             # Generate the info set
-            info_set_key = self.get_info_set_key(current_player)
+            info_set_key = self.get_info_set_key(state,i)
 
             I = self._get_info_set(
                 info_set_key=info_set_key, legal_actions=legal_actions
             )
-
 
             # Compute sigma_t from the value/regret network
             if i+1 == 1:
@@ -149,16 +167,10 @@ class CFR:
             I.calculate_strategy()
 
             for action in I.actions():
-
-                prev_env = deepcopy(self.env)
-                self.env.step(action)
             
-                v_a[action] = self.traverse(
+                v_a[action] = self.traverse(state.child(action),
                     i, theta_1, theta_2, M_v, M_pi, t+1
                 )
-
-                self.env = prev_env
-
 
             for action in I.actions():
                 expected_value = 0
@@ -188,7 +200,7 @@ class CFR:
 
         else:
             # Generate the info set for opposite player
-            info_set_key = self.get_info_set_key(1 - i)  # noam brown the goat
+            info_set_key = self.get_info_set_key(state, 1 - i)  # noam brown the goat
 
             I = self._get_info_set(
                 info_set_key=info_set_key, legal_actions=legal_actions
@@ -240,10 +252,9 @@ class CFR:
             while action not in I.actions():
                 action = random.choices(list(I.strategy.keys()), weights=I.strategy.values(), k=1)[0]
 
-            self.env.step(action)
 
             # i = self.env.get_player_id() #oops, xd
-            return self.traverse(i, theta_1, theta_2, M_v, M_pi, t+1)
+            return self.traverse(state.child(action), i, theta_1, theta_2, M_v, M_pi, t+1)
 
 
     '''
@@ -280,7 +291,7 @@ class CFR:
 
         #create the network that'll eventually be making all the decisions
         strategy_network = DeepCFRModel(
-            n_cardstages=NUM_CARD_STAGES, n_ranks=NUM_RANKS, n_suits=NUM_SUITS, nactions=NUM_ACTIONS
+            nbets=NUM_BETS, n_cardstages=NUM_CARD_STAGES, n_ranks=NUM_RANKS, n_suits=NUM_SUITS, nactions=NUM_ACTIONS
         ).to(DEVICE)
 
         strategy_network.load_state_dict(torch.load("./cfr_model.pth"))
@@ -319,11 +330,11 @@ class CFR:
             for i in range(self.n_players):
                 # Initialize each player's value networks, and the datasets sampled from the resevior memory
                 adv_network_1 = DeepCFRModel(
-                    n_cardstages=NUM_CARD_STAGES, n_ranks=NUM_RANKS, n_suits=NUM_SUITS, nactions=NUM_ACTIONS
+                    nbets=NUM_BETS, n_cardstages=NUM_CARD_STAGES, n_ranks=NUM_RANKS, n_suits=NUM_SUITS, nactions=NUM_ACTIONS
                 ).to(DEVICE)
 
                 adv_network_2 = DeepCFRModel(
-                    n_cardstages=NUM_CARD_STAGES, n_ranks=NUM_RANKS, n_suits=NUM_SUITS, nactions=NUM_ACTIONS
+                    nbets=NUM_BETS, n_cardstages=NUM_CARD_STAGES, n_ranks=NUM_RANKS, n_suits=NUM_SUITS, nactions=NUM_ACTIONS
                 ).to(DEVICE)
 
                 # train the advantage network to predict regrets based on infosets from the advantage memory for that player
@@ -377,20 +388,20 @@ class CFR:
 
                 # traverse the game tree for K iterations
                 for k in range(K):
-                    self.env.reset()
+                    starting_state = self.game.new_initial_state()
                     if i == 0:
-                        self.traverse(
-                            i, theta_1=adv_network_1, theta_2=adv_network_2, M_v=advantage_mem_1, M_pi=strategy_mem, t=1
+                        self.traverse(state=starting_state, i=i, 
+                            theta_1=adv_network_1, theta_2=adv_network_2, M_v=advantage_mem_1, M_pi=strategy_mem, t=1
                         )
                     else:
-                        self.traverse(
-                            i, theta_1=adv_network_1, theta_2=adv_network_2, M_v=advantage_mem_2, M_pi=strategy_mem, t=1
+                        self.traverse(state=starting_state, i=i, 
+                            theta_1=adv_network_1, theta_2=adv_network_2, M_v=advantage_mem_2, M_pi=strategy_mem, t=1
                         )
                     print(f"K: {k}")
 
         # initialize the strategy network
         strategy_network = DeepCFRModel(
-            n_cardstages=NUM_CARD_STAGES, n_ranks=NUM_RANKS, n_suits=NUM_SUITS, nactions=NUM_ACTIONS
+            nbets=NUM_BETS, n_cardstages=NUM_CARD_STAGES, n_ranks=NUM_RANKS, n_suits=NUM_SUITS, nactions=NUM_ACTIONS
         ).to(DEVICE)
 
         # train the strategy network to predict regrets based on infosets from the strategy memory

@@ -23,10 +23,12 @@ class CardEmbedding(nn.Module):
         return embs.view(B, num_cards, -1).sum(1)
 
 class DeepCFRModel(nn.Module):
-    def __init__(self, n_cardstages, n_ranks, n_suits, nactions, dim=CARD_EMBEDDING_DIM):
+    def __init__(self, nbets, n_cardstages, n_ranks, n_suits, nactions, dim=CARD_EMBEDDING_DIM):
         """
-        nbets: is set to 2, indicating that there are 2 distinct betting rounds.
-        nactions: is set to 5, representing the number of possible actions in the game.
+        nbets: number of betting features
+        nactions: number of actions in the game
+        n_ranks/n_suits: number of ranks/suits in the game
+        n_cardstages: number of rounds for a given hand, ie (preflop, flop, turn, river)
         dim: is set to 256, which is the dimensionality for the hidden layers and embeddings.
         """
         super(DeepCFRModel, self).__init__()
@@ -43,10 +45,10 @@ class DeepCFRModel(nn.Module):
         self.card3 = nn.Linear(dim, dim)
 
         # Originally from the paper
-        # self.bet1 = nn.Linear(2* nbets, dim)
+        self.bet1 = nn.Linear(2* nbets, dim)
 
         # For our 4 bet features
-        self.bet1 = nn.Linear(2, dim)
+        # self.bet1 = nn.Linear(2, dim)
 
         self.bet2 = nn.Linear(dim, dim)
         self.comb1 = nn.Linear(2 * dim, dim)
@@ -85,15 +87,17 @@ class DeepCFRModel(nn.Module):
         x = F.relu(self.card3(x))
 
         # 2. bet branch (originally from the paper)
-        # bet_size = bets.clamp(0, 1e6) # limit to a specified range (N * nbet_feats)
-        # bet_occurred = bets.ge(0) # T if >= 0 (N * nbet_feats)
+        bet_size = bets.clamp(0, 1e6) # limit to a specified range (N * nbet_feats)
+        bet_occurred = bets.ge(0) # T if >= 0 (N * nbet_feats)
 
-        # bet_feats = torch.cat([bet_size, bet_occurred.float()], dim=1) # cat along the second dime = N * (2 * nbet_feats)
+        bet_feats = torch.cat([bet_size, bet_occurred.float()], dim=1) # cat along the second dime = N * (2 * nbet_feats)
 
-        # y = F.relu(self.bet1(bet_feats))
+        y = F.relu(self.bet1(bet_feats))
 
         # For our version of bet features
-        y = F.relu(self.bet1(bets))
+        # print(f"bet1{self.bet1}")
+        # print(f"best {bets}")
+        # y = F.relu(self.bet1(bets))
         # print(y.shape)
 
         y = F.relu(self.bet2(y) + y)
