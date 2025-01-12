@@ -30,7 +30,6 @@ class CFR:
         * `n_players` is the number of players
         """
         self.n_players = n_players       
-        self.info_sets = {} #TODO: I don't think we need to be storing this, likely causing the massive mem overhead
         self.game = game
 
   
@@ -98,9 +97,7 @@ class CFR:
         """
         Returns the information set I for the current player at a given state.
         """
-        if info_set_key not in self.info_sets:
-            self.info_sets[info_set_key] = InfoSet(info_set_key, legal_actions)
-        return self.info_sets[info_set_key]
+        return InfoSet(info_set_key, legal_actions)
 
     '''
     Perform a traversal of the game tree population advantage and strategy memories, recursively returning the expected payoffs of actions
