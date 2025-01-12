@@ -32,30 +32,35 @@ END GAMEDEF
     game = load_universal_poker_from_acpc_gamedef(poker_variant)
 
     agent = CFR(game=game)
-    agent.load()  # If we have saved model, we first load the model
+    agent.load(args.load_path)  # If we have saved model, we first load the model
 
-    agent.train(iterations=5, K=10)    
-    agent.save()
+    agent.train(iterations=args.iterations, K=args.k)    
+    agent.save(args.save_path)
 
 
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser("CFR example in RLCard")
+    parser = argparse.ArgumentParser()
 
     parser.add_argument(
-        '--epochs',
+        '--iterations',
         type=int,
-        default=5000,
+        default=5,
     )
     parser.add_argument(
-        '--save_every',
+        '--k',
         type=int,
-        default= 100,
+        default= 10,
     )
     parser.add_argument(
-        '--log_dir',
+        '--save_path',
         type=str,
-        default='./experiments/training/',
+        default='./cfr_model.pth',
+    )
+    parser.add_argument(
+        '--load_path',
+        type=str,
+        default='./cfr_model.pth',
     )
 
     args = parser.parse_args()
