@@ -1,10 +1,15 @@
+import sys
+sys.path.append("../open_spiel/open_spiel")
+sys.path.append("../open_spiel/open_spiel/python")
 import numpy as np
 from typing import cast, List, Tuple
 from infoset import InfoSet
 import os
 import re
+import pyspiel
+from open_spiel.python import policy
+from pyspiel import exploitability
 import random
-from rlcard.utils.utils import *
 import torch
 from torch.utils.data import Dataset, DataLoader
 import torch.nn as nn
@@ -13,28 +18,24 @@ from config import *
 from network import DeepCFRModel
 from reservoir import MemoryReservoir, custom_collate
 from torch.cuda.amp import GradScaler, autocast
-import sys
-
-from copy import deepcopy
 
 
-class CFR:
+
+
+class CFR(policy.Policy):
 
     def __init__(self, *,
                  n_players: int = 2,
                  game
                  ):
-        """
-        * `create_new_history` creates a new empty history
-        * `epochs` is the number of iterations to train on $T$
-        * `n_players` is the number of players
-        """
+        all_players = list(range(game.num_players()))
+        super(CFR, self).__init__(game, all_players)
         self.n_players = n_players       
         self.game = game
 
   
 
-    def get_info_set_key(self, state, current_player):
+    def get_info_set_key(self, state: pyspiel.State, current_player: int):
         """
         Generates a unique key for the information set based on the player's observations.
 
@@ -104,7 +105,7 @@ class CFR:
     Instead of a gym environment, OpenSpiel will pass in a 'state' variable which has all the functionality of a gym environment
     '''
     def traverse(
-        self, state, i: int, theta_1: DeepCFRModel, theta_2: DeepCFRModel,
+        self, state: pyspiel.State, i: int, theta_1: DeepCFRModel, theta_2: DeepCFRModel,
         M_v: MemoryReservoir, M_pi: MemoryReservoir, t: int
     ) -> float:
         # player 1 ->index 0, player 2 -> index 1
@@ -238,78 +239,123 @@ class CFR:
                 sigma_t[act] = I.strategy.get(act,0)
             
             card_tensor, bet_tensor = I.convert_key_to_tensor()
-            # Insert the infoset and its action probabilities (I t t(I)) into the strategy memory M
+            # Insert the infoset and its action probabilities (I t t(I)) into the strategy memory M_pi
+
+            # print(f"adding { torch.tensor(sigma_t, dtype = torch.float32)} to strategy memory")
             M_pi.add_sample(card_tensor, bet_tensor, torch.tensor(sigma_t, dtype = torch.float32))
 
             # Sample action from strategy, check if its legal
             
             action = random.choices(list(I.strategy.keys()), weights=I.strategy.values(), k=1)[0]
-            #print(f"actions {I.actions()} action taken {action}")
             
             while action not in I.actions():
                 action = random.choices(list(I.strategy.keys()), weights=I.strategy.values(), k=1)[0]
 
 
-            # i = self.env.get_player_id() #oops, xd
             return self.traverse(state.child(action), i, theta_1, theta_2, M_v, M_pi, t+1)
 
+    '''
+    This is a helper function that's needed for Openspiel to be capable of calculating the explotability 
+    of a given policy. If no model is passed in, function will automatically use self.policy instead
+    Args:
+      state: (pyspiel.State)
+      strategy_network: network.DeepCFRModel
+    Returns:
+      (dict) action probabilities for a single state
+    '''
+    def action_probabilities(self,state):
+        #Create the infoset object
+        key = self.get_info_set_key(state, state.current_player())
+        key = key = np.frombuffer(key, dtype=np.int32)
+        I = self._get_info_set(key, state.legal_actions())
+
+        strategy_network = self.policy
+       
+        #Use the infoset to perform inference on our strategy network, return our network's PDF over all actions
+        card_tensor, bet_tensor = I.convert_key_to_tensor()
+        strategy = strategy_network(card_tensor, bet_tensor)[0]      
+
+        print(strategy)
+        action_probs = {}
+        
+        for action in state.legal_actions():
+            action_probs[action] = strategy[action].item()
+
+        #Our neural network returns a pdf over all actions (bc NN kinda have to have a fixed output dimension)
+        #So we take the probabilities of only the legal actions, and softmax it
+
+        tensor = torch.tensor(list(action_probs.values())).to(DEVICE)
+        tensor = torch.nn.functional.softmax(tensor)
+
+        for i, action in enumerate(action_probs.keys()):
+            action_probs[action] = tensor[i].item()
+
+        return action_probs
+      
+    def compute_exploitability(self):
+        return exploitability(game=self.game, policy = policy.tabular_policy_from_callable(self.game, self.action_probabilities))
 
     '''
-    This is basically the only function you need to implement to interact with the RL card environment,
-    just state how to act in response to a certain state, and watch the magic happen.
-    '''    
-    def eval_step(self, state):
-        legal_actions = list(state['legal_actions'].keys())
-
-        #code to get the key
-        suit_to_int = {'S': 0, 'H': 13, 'D': 26, 'C': 39}
-        rank_to_int = {'2': 0, '3': 1, '4': 2, '5': 3, '6': 4, '7': 5, '8': 6, '9': 7, 'T': 8,'J': 9 ,'Q': 10, 'K': 11, 'A': 12}
-
-
-        hole_cards = [-1,-1]
-
-        for i, card in enumerate(state['raw_obs']['hand']):
-            suit = card[0]
-            rank = card[1]
-
-            hole_cards[i] = suit_to_int[suit] + rank_to_int[rank]
-
-        board_cards = [-1,-1,-1,-1,-1]
-
-        for i, card in enumerate(state['raw_obs']['public_cards']):
-            suit = card[0]
-            rank = card[1]
-
-            board_cards[i] = suit_to_int[suit] + rank_to_int[rank]
-
-        key = np.array(hole_cards + board_cards + state['raw_obs']['all_chips'], dtype=np.int32)
-        
-        I = InfoSet(key.tobytes(), legal_actions)
-
-        #create the network that'll eventually be making all the decisions
+    Trains the strategy network off of the policy vectors sigma_t passed into the strategy memory during training
+    and returns the newly trained neural network
+    '''
+    def _train_strategy_network(self, strategy_mem: MemoryReservoir, verbose = False) -> DeepCFRModel:
+         # initialize the strategy network
         strategy_network = DeepCFRModel(
             nbets=NUM_BETS, n_cardstages=NUM_CARD_STAGES, n_ranks=NUM_RANKS, n_suits=NUM_SUITS, nactions=NUM_ACTIONS
         ).to(DEVICE)
 
-        strategy_network.load_state_dict(torch.load("./cfr_model.pth"))
+        # train the strategy network to predict regrets based on infosets from the strategy memory
+        dataset = strategy_mem.extract_samples()
+        batch_size = BATCH_SIZE  # NOTE: In the paper, batch size of 10,000 (8192)
+        dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True, collate_fn=custom_collate)
+        criterion = nn.MSELoss()
+        optimizer = optim.Adam(strategy_network.parameters(), lr=LEARNING_RATE)
 
-        #pass in the current state as tensors, and sample action from the generated probability disbribution
-        card_tensor, bet_tensor = I.convert_key_to_tensor()
+        epochs = STRATEGY_NETWORK_EPOCHS
 
-        strategy = strategy_network(card_tensor, bet_tensor)
-        # print(strategy)
-        sample_action = random.choices([x for x in range(NUM_ACTIONS)], weights=strategy[0], k=1)[0]
-        
-        while sample_action not in I.actions():
-            sample_action = random.choices([x for x in range(NUM_ACTIONS)], weights=strategy[0], k=1)[0]
+        for epoch in range(epochs):
+            strategy_network.train()  # Set model to training mode
+            total_loss = 0.0
+            batch = 0
+            for input1, input2, output in dataloader:
+                output = output.to(DEVICE)
+                batch += 1
 
-        #rl card wants me to return another value in addition to the sample action but will never use it ????
-        return sample_action, strategy
+                scaler = GradScaler()
+
+                with autocast():
+                    predictions = strategy_network(input1, input2)
+                    # Compute loss
+                    loss = criterion(predictions, output)
+
+                # Backward pass
+                optimizer.zero_grad()  # Reset gradients
+
+                #Using this scaler this to make training between GPUs and CPUs more efficient
+                scaler.scale(loss).backward()
+
+                scaler.step(optimizer)
+                scaler.update()
 
 
-    # NOTE: iterations def should not be 1
-    def train(self, iterations=1, K=10):
+                # Accumulate loss
+                total_loss += loss.item()
 
+                if verbose:
+                    print(f"Epoch {epoch + 1}/{epochs}, Batch {batch:.4f}, Loss: {loss:.4f}")
+
+        return strategy_network
+
+    '''
+    This function runs the main cfr training loop, 
+    iterations is the number of times a NN is trained from scratch before traversing the game tree
+    K is the number of traversals per player per iteration
+    log_every is the amount of times in the training loop that the user wants to calculate the exploitability of the current agent
+    '''
+    def train(self, iterations=1, K=10, log_every = 3):
+
+        log_every = iterations/log_every
         # NOTE: in the paper, they set the memory size to 40 million
         advantage_mem_1 = MemoryReservoir(max_size=MEM_SIZE)
         advantage_mem_2 = MemoryReservoir(max_size=MEM_SIZE)
@@ -319,10 +365,9 @@ class CFR:
 
         # Loop for `epochs` times
         for t in range(iterations):
-            print(f"on iteration {t}")
-            print(f"adv memory 1 using {advantage_mem_1.get_memory_usage()}")
-            print(f"adv memory 2 using {advantage_mem_2.get_memory_usage()}")
-            print(f"strategy memory using {strategy_mem.get_memory_usage()}")
+            if(t % log_every == 0 and t != 0):
+                self.policy = self._train_strategy_network(strategy_mem=strategy_mem)
+                print(f"Exploitability is {self.compute_exploitability()} on iteration {t}")
             
             for i in range(self.n_players):
                 # Initialize each player's value networks, and the datasets sampled from the resevior memory
@@ -394,59 +439,8 @@ class CFR:
                         self.traverse(state=starting_state, i=i, 
                             theta_1=adv_network_1, theta_2=adv_network_2, M_v=advantage_mem_2, M_pi=strategy_mem, t=1
                         )
-                    print(f"K: {k}")
 
-        # initialize the strategy network
-        strategy_network = DeepCFRModel(
-            nbets=NUM_BETS, n_cardstages=NUM_CARD_STAGES, n_ranks=NUM_RANKS, n_suits=NUM_SUITS, nactions=NUM_ACTIONS
-        ).to(DEVICE)
-
-        # train the strategy network to predict regrets based on infosets from the strategy memory
-        #print("Num samples in strategy memory: ", strategy_mem.num_samples, strategy_mem.samples)
-        #print(f"Samples in adv mem 1 {advantage_mem_1.samples}, adv mem 2 {advantage_mem_2.num_samples}")
-
-        
-        dataset = strategy_mem.extract_samples()
-        #print("Data in dataset")
-        #print(dataset.data)
-        batch_size = BATCH_SIZE  # NOTE: In the paper, batch size of 10,000 (8192)
-        dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True, collate_fn=custom_collate)
-        criterion = nn.MSELoss()
-        optimizer = optim.Adam(strategy_network.parameters(), lr=LEARNING_RATE)
-
-        epochs = 1
-
-        for epoch in range(epochs):
-            strategy_network.train()  # Set model to training mode
-            total_loss = 0.0
-            batch = 0
-            for input1, input2, output in dataloader:
-                output = output.to(DEVICE)
-                batch += 1
-
-                scaler = GradScaler()
-
-                with autocast():
-                    predictions = strategy_network(input1, input2)
-                    # Compute loss
-                    loss = criterion(predictions, output)
-
-                # Backward pass
-                optimizer.zero_grad()  # Reset gradients
-
-                #Using this scaler this to make training between GPUs and CPUs more efficient
-                scaler.scale(loss).backward()
-
-                scaler.step(optimizer)
-                scaler.update()
-
-
-                # Accumulate loss
-                total_loss += loss.item()
-
-                print(f"Epoch {epoch + 1}/{epochs}, Batch {batch:.4f}, Loss: {loss:.4f}")
-
-        self.policy = strategy_network
+        self.policy = self._train_strategy_network(strategy_mem=strategy_mem, verbose=True)
 
     def save(self, model_path='./cfr_model.pth'):
         ''' Save model

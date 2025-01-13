@@ -1,18 +1,18 @@
 import pyspiel
 from pyspiel.universal_poker import load_universal_poker_from_acpc_gamedef
+from open_spiel.python.algorithms import exploitability
+from open_spiel.python import policy
 from config import *
 
 import argparse
 from cfr import CFR
 
 import numpy as np
-import random
 
 
 def train(args):
     # Load the game environment 
     
-
     #I know it's hella strange, but trust, keep this format exactly like this, and just change the config file, 
     # you change anything even slightly, code will not work 
     poker_variant =f"""\
@@ -34,9 +34,10 @@ END GAMEDEF
     agent = CFR(game=game)
     agent.load(args.load_path)  # If we have saved model, we first load the model
 
-    agent.train(iterations=args.iterations, K=args.k)    
+    agent.train(iterations=args.iterations, K=args.k, log_every=args.log_every)    
     agent.save(args.save_path)
 
+    print(f"Final model performance: {agent.compute_exploitability()}")
 
 
 if __name__ == '__main__':
@@ -51,6 +52,11 @@ if __name__ == '__main__':
         '--k',
         type=int,
         default= 10,
+    )
+    parser.add_argument(
+        '--log_every',
+        type=int,
+        default= 2,
     )
     parser.add_argument(
         '--save_path',

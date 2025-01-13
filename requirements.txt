@@ -1,4 +1,4 @@
 #Great lakes doesn't support the lastest versions of these libraries, so its this
-numpy==1.19.5
-rlcard==1.2.0
-torch==1.10.2
+numpy
+open_spiel==1.5
+torch

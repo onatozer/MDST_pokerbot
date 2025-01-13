@@ -35,16 +35,18 @@ SMALL_BLIND = 5
 
 
 '''Network Hyper-parameter configs'''
-BATCH_SIZE = 256
+BATCH_SIZE = 1024
 
 #Currently using the same learning rate for both networks
 LEARNING_RATE = .001
 
-MEM_SIZE = 2**15 #about 32,000, would like to see if I can go higher
+MEM_SIZE = 2**18 #about 260,000, paper goes to 4mil I believe
 
-#In the paper they set this as 256, but IMO seems completely overkill. There's 52 total cards in a deck of poker 
-#a lower-dim embedding work good enough, honestly 32 or 16 would probably be fine too even
-CARD_EMBEDDING_DIM = 64
+#In the paper they literally show that there's no performance increase in going from 128 to 256
+CARD_EMBEDDING_DIM = 128
+
+STRATEGY_NETWORK_EPOCHS = 1
+VALUE_NETWORK_EPOCHS = 1
 
 import torch
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
