@@ -1,6 +1,4 @@
 import sys
-sys.path.append("../open_spiel/open_spiel")
-sys.path.append("../open_spiel/open_spiel/python")
 import numpy as np
 from typing import cast, List, Tuple
 from infoset import InfoSet
@@ -92,7 +90,6 @@ class CFR(policy.Policy):
 
         key = np.array(hole_cards + board_cards + bet_features, dtype=np.int32)
         return key.tobytes()
-
 
     def _get_info_set(self, info_set_key, legal_actions) -> InfoSet:
         """
@@ -259,7 +256,6 @@ class CFR(policy.Policy):
     of a given policy. If no model is passed in, function will automatically use self.policy instead
     Args:
       state: (pyspiel.State)
-      strategy_network: network.DeepCFRModel
     Returns:
       (dict) action probabilities for a single state
     '''
@@ -275,7 +271,6 @@ class CFR(policy.Policy):
         card_tensor, bet_tensor = I.convert_key_to_tensor()
         strategy = strategy_network(card_tensor, bet_tensor)[0]      
 
-        print(strategy)
         action_probs = {}
         
         for action in state.legal_actions():
@@ -291,10 +286,28 @@ class CFR(policy.Policy):
             action_probs[action] = tensor[i].item()
 
         return action_probs
-      
+
+    '''
+    Helper function I'm writing so that the agent can interface with the game_wrapper class
+
+    Args: 
+        state: (pyspiel.State)
+    Returns:
+        some action samples from the possible states
+    '''
+    def take_action(self,state):
+        pdf = self.action_probabilities(state)
+        print(f"pdf {pdf}")
+        values = list(pdf.keys())
+        probabilities = [pdf[key] for key in values]
+
+        # Sample from the dictionary
+        action = random.choices(values, weights=probabilities, k=1) 
+        return action[0]
+
+
     def compute_exploitability(self):
         return exploitability(game=self.game, policy = policy.tabular_policy_from_callable(self.game, self.action_probabilities))
-
     '''
     Trains the strategy network off of the policy vectors sigma_t passed into the strategy memory during training
     and returns the newly trained neural network
@@ -351,9 +364,8 @@ class CFR(policy.Policy):
     This function runs the main cfr training loop, 
     iterations is the number of times a NN is trained from scratch before traversing the game tree
     K is the number of traversals per player per iteration
-    log_every is the amount of times in the training loop that the user wants to calculate the exploitability of the current agent
     '''
-    def train(self, iterations=1, K=10, log_every = 3):
+    def train(self, iterations=1, K=10):
 
         log_every = iterations/log_every
         # NOTE: in the paper, they set the memory size to 40 million
@@ -365,10 +377,6 @@ class CFR(policy.Policy):
 
         # Loop for `epochs` times
         for t in range(iterations):
-            if(t % log_every == 0 and t != 0):
-                self.policy = self._train_strategy_network(strategy_mem=strategy_mem)
-                print(f"Exploitability is {self.compute_exploitability()} on iteration {t}")
-            
             for i in range(self.n_players):
                 # Initialize each player's value networks, and the datasets sampled from the resevior memory
                 adv_network_1 = DeepCFRModel(
@@ -456,12 +464,20 @@ class CFR(policy.Policy):
         # Save the model weights
         torch.save(self.policy.state_dict(), model_path)
 
+    #TODO: Current design of this function doesn't allow for training to continue on top of previous model weights 
     def load(self, model_path='./cfr_model.pth'):
         ''' Load model
         '''
         if not os.path.exists(model_path):
             print(f'No model found at {model_path}')
             return
+        
+        strategy_network = DeepCFRModel(
+            nbets=NUM_BETS, n_cardstages=NUM_CARD_STAGES, n_ranks=NUM_RANKS, n_suits=NUM_SUITS, nactions=NUM_ACTIONS
+        ).to(DEVICE)
 
-        self.policy = torch.load(model_path)
+        strategy_network.load_state_dict(torch.load(model_path))
+        strategy_network.eval()
+
+        self.policy = strategy_network
         

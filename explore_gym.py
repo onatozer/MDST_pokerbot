@@ -70,7 +70,7 @@ print(state.legal_actions(state.current_player()))
 agent = CFR(game=game)
 agent.load('./cfr_model.pth')
 
-print(exploitability(game=game, policy = policy.tabular_policy_from_callable(game, agent.action_probabilities)))
+# print(exploitability(game=game, policy = policy.tabular_policy_from_callable(game, agent.action_probabilities)))
 
 # print(state.legal_actions())
 # pdf = agent.action_probabilities(state)

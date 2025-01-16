@@ -38,7 +38,7 @@ chmod -x install_libs.sh
 ./istall_libs.sh
 
 # Run the program
-python3 train_model.py --iterations 400 --k 100 
+python3 train_model.py --iterations 100 --k 300 
 
 # Post-job cleanup (optional)
 deactivate
